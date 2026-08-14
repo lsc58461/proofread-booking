@@ -145,7 +145,6 @@ src/
     api/
       state/         현황 조회 (전체 / 폴링용 경량)
       claim/         신청
-      cancel/        취소
       admin/         로그인 + 관리자 동작 프록시
   components/
     SlotGrid.tsx     시간표 (데스크톱 격자 / 모바일 날짜탭)

@@ -41,6 +41,8 @@ const EMPTY: AdminConfig = {
 
 export default function AdminPage() {
   const [authed, setAuthed] = useState<boolean | null>(null);
+  // 설정까지 다 받아온 뒤에 화면을 그린다. 그러지 않으면 빈 폼이 먼저 보인다.
+  const [ready, setReady] = useState(false);
   const [password, setPassword] = useState('');
   const [msg, setMsg] = useState<Msg>(null);
   const [busy, setBusy] = useState(false);
@@ -87,8 +89,10 @@ export default function AdminPage() {
   useEffect(() => {
     void (async () => {
       const s = await api<{ ok: true; authed: boolean }>('session');
-      setAuthed(s.ok && s.authed);
-      if (s.ok && s.authed) await loadAll();
+      const on = s.ok && s.authed;
+      if (on) await loadAll();
+      setAuthed(on);
+      setReady(true);
     })();
   }, [loadAll]);
 
@@ -97,9 +101,9 @@ export default function AdminPage() {
     try {
       const r = await api<{ ok: boolean; message?: string }>('login', { password });
       if (r.ok) {
-        setAuthed(true);
         setPassword('');
         await loadAll();
+        setAuthed(true);
       } else {
         flash('err', r.message ?? '로그인하지 못했습니다.');
       }
@@ -128,8 +132,12 @@ export default function AdminPage() {
 
   /* ── 로그인 화면 ── */
 
-  if (authed === null) {
-    return <main className="p-8 text-sm text-muted">확인 중…</main>;
+  if (authed === null || !ready) {
+    return (
+      <main className="flex min-h-screen items-center justify-center">
+        <p className="text-sm text-muted">불러오는 중…</p>
+      </main>
+    );
   }
 
   if (!authed) {
