@@ -512,7 +512,13 @@ function apiAdminDelete(slot) {
   return { ok: true };
 }
 
-/** 신청 내역을 시트에 한 번에 다시 써서 어긋난 상태를 복구한다. */
+/**
+ * 신청 내역을 기준으로 시트를 다시 맞춘다.
+ *
+ * 열 단위로 한 번에 쓰면 열린 칸 사이에 낀 회색 칸까지 범위에 들어가는데,
+ * 운영자가 그 칸들을 보호해 두는 경우가 있어 한 칸만 막혀도 열 전체가 실패한다.
+ * 그래서 값이 달라진 칸만 낱개로 쓰고, 막힌 칸은 세어서 알려준다.
+ */
 function apiAdminSyncToSheet() {
   var cfg = getConfig_();
   var claims = getAllClaims_();
@@ -526,21 +532,28 @@ function apiAdminSyncToSheet() {
   });
 
   var written = 0;
-  Object.keys(byCol).forEach(function (col) {
-    var rows = byCol[col];
+  var blocked = 0;
+  Object.keys(byCol).forEach(function (colStr) {
+    var col = Number(colStr);
+    var rows = byCol[colStr];
     var minR = Math.min.apply(null, rows);
     var maxR = Math.max.apply(null, rows);
-    var range = sh.getRange(minR, Number(col), maxR - minR + 1, 1);
-    var vals = range.getValues();
+    // 읽기는 보호와 무관하므로 현재 값은 한 번에 가져온다.
+    var vals = sh.getRange(minR, col, maxR - minR + 1, 1).getValues();
     rows.forEach(function (r) {
       var c = claims[slotKey_(col, r)];
       var next = c ? c.name : '';
-      if (normName_(vals[r - minR][0]) !== next) { vals[r - minR][0] = next; written++; }
+      if (normName_(vals[r - minR][0]) === next) return;
+      try {
+        sh.getRange(r, col).setValue(next);
+        written++;
+      } catch (err) {
+        blocked++;
+      }
     });
-    range.setValues(vals);
   });
   dropGridCache_();
-  return { ok: true, written: written };
+  return { ok: true, written: written, blocked: blocked };
 }
 
 /** 시트를 직접 고친 뒤, 시트 내용을 정답으로 삼아 신청 현황을 다시 만든다. */

@@ -485,7 +485,13 @@ export default function AdminPage() {
             onClick={() => {
               if (!confirm('신청 현황을 기준으로 시트를 덮어씁니다. 계속할까요?')) return;
               void run('admin.sync', {}, (d) => {
-                flash('ok', `시트 ${(d as unknown as { written: number }).written}칸을 맞췄습니다.`);
+                const r = d as unknown as { written: number; blocked: number };
+                flash(
+                  r.blocked ? 'err' : 'ok',
+                  r.blocked
+                    ? `${r.written}칸을 맞췄지만 ${r.blocked}칸은 보호되어 있어 쓰지 못했습니다. 시트에서 해당 칸의 보호를 풀어 주세요.`
+                    : `시트 ${r.written}칸을 맞췄습니다.`,
+                );
               });
             }}
             className={btn}
