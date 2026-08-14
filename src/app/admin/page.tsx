@@ -63,10 +63,16 @@ export default function AdminPage() {
     setTimeout(() => setMsg(null), 5000);
   }, []);
 
+  // 저장된 값의 사본. 화면의 현재 값과 달라지면 '저장 안 된 변경'으로 본다.
+  const [savedSnapshot, setSavedSnapshot] = useState('');
+
   const applyConfig = useCallback((c: AdminConfig) => {
+    const oa = toLocalInput(c.openAt);
+    const ca = toLocalInput(c.closeAt);
     setCfg(c);
-    setOpenAtStr(toLocalInput(c.openAt));
-    setCloseAtStr(toLocalInput(c.closeAt));
+    setOpenAtStr(oa);
+    setCloseAtStr(ca);
+    setSavedSnapshot(JSON.stringify({ ...c, openAtStr: oa, closeAtStr: ca }));
   }, []);
 
   const loadAll = useCallback(async () => {
@@ -167,6 +173,19 @@ export default function AdminPage() {
 
   /* ── 관리 화면 ── */
 
+  const dirty =
+    savedSnapshot !== '' &&
+    JSON.stringify({ ...cfg, openAtStr, closeAtStr }) !== savedSnapshot;
+
+  const saveConfig = () => {
+    const next = { ...cfg, openAt: fromLocalInput(openAtStr), closeAt: fromLocalInput(closeAtStr) };
+    void run('admin.save', { config: next }, (d) => {
+      applyConfig((d as unknown as { config: AdminConfig }).config);
+      flash('ok', '저장했습니다. 이제 신청 페이지에 반영됩니다.');
+      void loadAll();
+    });
+  };
+
   const toggleCol = (col: number) =>
     setCfg((c) => ({
       ...c,
@@ -179,7 +198,8 @@ export default function AdminPage() {
   const btn = 'rounded-lg border border-line bg-surface px-3.5 py-2 text-sm hover:bg-canvas disabled:opacity-50';
 
   return (
-    <main className="mx-auto max-w-4xl px-4 py-8">
+    <>
+    <main className={`mx-auto max-w-4xl px-4 py-8 ${dirty ? 'pb-28' : ''}`}>
       <header className="mb-6 flex items-center justify-between">
         <h1 className="text-xl font-bold">관리자</h1>
         <button
@@ -261,6 +281,7 @@ export default function AdminPage() {
         <h2 className="mb-1 text-sm font-semibold">2. 신청 받을 날짜</h2>
         <p className="mb-4 text-xs text-muted">
           체크한 날짜의 <strong>흰색 칸</strong>만 신청을 받습니다. 회색·주황색 칸과 이미 이름이 적힌 칸은 자동으로 제외됩니다.
+          날짜를 바꾼 뒤에는 아래 <strong>설정 저장</strong>을 눌러야 반영됩니다.
         </p>
 
         {dates.length === 0 ? (
@@ -387,16 +408,12 @@ export default function AdminPage() {
       <button
         type="button"
         disabled={busy}
-        onClick={() => {
-          const next = { ...cfg, openAt: fromLocalInput(openAtStr), closeAt: fromLocalInput(closeAtStr) };
-          void run('admin.save', { config: next }, (d) => {
-            applyConfig((d as unknown as { config: AdminConfig }).config);
-            flash('ok', '저장했습니다.');
-          });
-        }}
-        className="mb-8 w-full rounded-lg bg-brand px-4 py-3 text-sm font-semibold text-white disabled:opacity-60"
+        onClick={saveConfig}
+        className={`mb-8 w-full rounded-lg px-4 py-3 text-sm font-semibold text-white disabled:opacity-60 ${
+          dirty ? 'bg-brand' : 'bg-brand/50'
+        }`}
       >
-        설정 저장
+        {dirty ? '설정 저장 (변경사항 있음)' : '설정 저장'}
       </button>
 
       {/* 신청 현황 */}
@@ -529,5 +546,27 @@ export default function AdminPage() {
         </div>
       </section>
     </main>
+
+    {/* 저장하지 않은 변경이 있으면 화면을 벗어나도 계속 보이게 띄운다.
+        날짜만 바꿔놓고 저장을 잊으면 오픈 당일에야 알게 되기 때문이다. */}
+    {dirty && (
+      <div className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/95 shadow-[0_-1px_12px_rgba(16,24,40,0.08)] backdrop-blur">
+        <div className="mx-auto flex max-w-4xl items-center justify-between gap-4 px-4 py-3">
+          <p className="text-sm">
+            <strong>저장하지 않은 변경사항이 있습니다.</strong>
+            <span className="ml-1 text-muted">저장해야 신청 페이지에 반영됩니다.</span>
+          </p>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={saveConfig}
+            className="shrink-0 rounded-lg bg-brand px-5 py-2.5 text-sm font-semibold text-white disabled:opacity-60"
+          >
+            {busy ? '저장 중…' : '설정 저장'}
+          </button>
+        </div>
+      </div>
+    )}
+    </>
   );
 }
