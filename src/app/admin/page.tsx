@@ -312,15 +312,16 @@ export default function AdminPage() {
 
         {unpainted > 0 && (
           <p className="mt-3 rounded-lg bg-canvas px-4 py-3 text-xs leading-relaxed text-muted">
-            배경색을 한 번도 지정하지 않은 칸 <strong className="text-ink tabular">{unpainted}개</strong>는
-            열지 않았습니다. 이 칸들도 신청을 받으려면 시트에서 <strong>흰색으로 칠한 뒤</strong> 다시 확인해 주세요.
+            이 중 <strong className="text-ink tabular">{unpainted}개</strong>는 배경색을 한 번도 지정하지 않은
+            칸입니다. 화면에서 흰색으로 보이므로 함께 열었습니다. 열지 않으려면 시트에서 회색으로 칠한 뒤
+            다시 확인해 주세요.
           </p>
         )}
 
         {!exact && (
-          <p className="mt-3 rounded-lg bg-danger-soft px-4 py-3 text-xs leading-relaxed text-danger">
-            Sheets 고급 서비스를 사용할 수 없어 &ldquo;칠한 적 없는 칸&rdquo;을 구분하지 못했습니다.
-            정리하지 않은 날짜 열이 함께 열릴 수 있으니 칸 수를 꼭 확인해 주세요.
+          <p className="mt-3 rounded-lg bg-canvas px-4 py-3 text-xs leading-relaxed text-muted">
+            Sheets 고급 서비스를 사용할 수 없어 배경색을 지정하지 않은 칸이 몇 개인지 세지 못했습니다.
+            열리는 칸 수 자체는 정확합니다.
           </p>
         )}
       </section>

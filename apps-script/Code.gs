@@ -257,13 +257,15 @@ function readGrid_(cfg) {
   var open = [];
   var pre = {};
   var raw = {};
-  var unpainted = 0;   // 흰색이지만 칠한 적은 없는 칸 — 관리자에게 알려줄 값
+  var unpainted = 0;   // 흰색이지만 배경색을 지정한 적은 없는 칸 — 관리자에게 알려줄 값
   dates.forEach(function (d) {
     if (!openCols[d.col]) return;
     times.forEach(function (t) {
       var p = paint.cells[t.row - 1][d.col - 1];
       if (!p || !p.white) return;                // 회색·주황 등은 제외
-      if (!p.explicit) { unpainted++; return; }  // 아직 정리하지 않은 칸은 열지 않는다
+      // 배경색을 지정한 적 없는 칸도 화면에서는 흰색으로 보이므로 같이 연다.
+      // 정리하지 않은 날짜 열이 통째로 열리는 것은 관리자가 열을 직접 고르는 단계에서 막힌다.
+      if (!p.explicit) unpainted++;
       var key = slotKey_(d.col, t.row);
       var cell = normName_(values[t.row - 1][d.col - 1]);
       if (cell) {                                // 시트에 이미 적힌 신청
