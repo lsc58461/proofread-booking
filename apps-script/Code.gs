@@ -325,6 +325,15 @@ function apiState() {
   } catch (err) {
     return { ok: true, ready: false, now: Date.now(), title: cfg.title, message: '시트를 불러올 수 없습니다. 관리자에게 문의해 주세요.' };
   }
+  // 신청 가능한 칸이 하나도 없는 날짜·시간은 내려보내지 않는다.
+  // 그대로 두면 열지 않은 날짜 열과 빈 시간대가 표에 빈 칸으로 잔뜩 남는다.
+  var colsUsed = {}, rowsUsed = {};
+  grid.open.forEach(function (k) {
+    var p = parseSlot_(k);
+    colsUsed[p.col] = true;
+    rowsUsed[p.row] = true;
+  });
+
   return {
     ok: true,
     ready: true,
@@ -334,8 +343,8 @@ function apiState() {
     closeAt: cfg.closeAt,
     allowCancel: !!cfg.allowCancel,
     now: Date.now(),
-    dates: grid.dates,
-    times: grid.times,
+    dates: grid.dates.filter(function (d) { return colsUsed[d.col]; }),
+    times: grid.times.filter(function (t) { return rowsUsed[t.row]; }),
     open: grid.open,
     taken: mergeTaken_(grid.pre, getAllClaims_())
   };
