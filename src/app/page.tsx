@@ -6,6 +6,8 @@ import type { BookingState, SlotKey, TakenState } from '@/lib/types';
 
 const ID_KEY = 'pb.identity';
 const POLL_MS = 5000;
+/** 신청이 밀릴 때 브라우저가 순서를 붙잡고 기다리는 최대 시간 */
+const CLAIM_DEADLINE_MS = 90000;
 
 type Toast = { kind: 'ok' | 'err'; text: string };
 type Phase = 'loading' | 'error' | 'notready' | 'before' | 'open' | 'closed';
@@ -39,6 +41,7 @@ export default function ApplyPage() {
   // 방금 신청한 자리. 저장하지 않으므로 새로고침하면 사라진다.
   const [booked, setBooked] = useState<SlotKey | null>(null);
   const [busy, setBusy] = useState(false);
+  const [note, setNote] = useState('');
   const [toast, setToast] = useState<Toast | null>(null);
   const [, forceTick] = useState(0);
 
@@ -164,24 +167,38 @@ export default function ApplyPage() {
     if (!/^\d{4}$/.test(p)) return showToast('err', '연락처 뒤 4자리를 입력해 주세요.');
 
     setBusy(true);
+    setNote('');
+    const deadline = Date.now() + CLAIM_DEADLINE_MS;
     try {
-      const res = await fetch('/api/claim', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: n, last4: p, slot: selected }),
-      });
-      const data = (await res.json()) as { ok: boolean; message?: string };
-      if (data.ok) {
-        setBooked(selected);
-        setSelected(null);
-        showToast('ok', '신청이 완료되었습니다.');
-      } else {
-        showToast('err', data.message ?? '신청하지 못했습니다.');
+      // 접속이 몰려 밀린 경우 여기서 계속 다시 시도한다.
+      // 중간에 포기하면 줄에서 빠져 맨 뒤로 다시 서게 되고, 그 사이 자리가
+      // 찰 수 있다. 같은 신청을 다시 보내도 결과가 같으므로 반복해도 안전하다.
+      for (;;) {
+        const res = await fetch('/api/claim', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: n, last4: p, slot: selected }),
+        });
+        const data = (await res.json()) as { ok: boolean; retryable?: boolean; message?: string };
+
+        if (data.ok) {
+          setBooked(selected);
+          setSelected(null);
+          showToast('ok', '신청이 완료되었습니다.');
+          return;
+        }
+        if (!data.retryable || Date.now() > deadline) {
+          showToast('err', data.message ?? '신청하지 못했습니다.');
+          return;
+        }
+        setNote('신청이 몰리고 있어요. 순서를 기다리는 중입니다…');
+        await new Promise((r) => setTimeout(r, 600 + Math.random() * 700));
       }
     } catch {
       showToast('err', '네트워크 오류가 발생했습니다. 다시 시도해 주세요.');
     } finally {
       setBusy(false);
+      setNote('');
       void loadTaken();
     }
   }, [selected, busy, name, last4, showToast, loadTaken]);
@@ -350,17 +367,20 @@ export default function ApplyPage() {
         <div className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/95 shadow-[0_-1px_12px_rgba(16,24,40,0.08)] backdrop-blur">
           <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3">
             <div className="min-w-0">
-              <p className="text-xs text-muted">선택한 시간</p>
+              <p className="text-xs text-muted">{note ? '순서 대기 중' : '선택한 시간'}</p>
               <p className="truncate font-semibold">{slotLabel(selected)}</p>
+              {note && <p className="mt-0.5 truncate text-xs text-brand">{note}</p>}
             </div>
             <div className="flex shrink-0 gap-2">
-              <button
-                type="button"
-                onClick={() => setSelected(null)}
-                className="rounded-lg border border-line px-3.5 py-2.5 text-sm hover:bg-canvas"
-              >
-                취소
-              </button>
+              {!busy && (
+                <button
+                  type="button"
+                  onClick={() => setSelected(null)}
+                  className="rounded-lg border border-line px-3.5 py-2.5 text-sm hover:bg-canvas"
+                >
+                  취소
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => void submit()}
