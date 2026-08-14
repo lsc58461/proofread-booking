@@ -345,9 +345,9 @@ export default function ApplyPage() {
         )}
       </main>
 
-      {/* 하단 신청 바 */}
+      {/* 하단 신청 바 — 시간표의 고정 열·헤더가 z-10/z-20 이라 그보다 위에 둔다 */}
       {selected && phase === 'open' && (
-        <div className="fixed inset-x-0 bottom-0 border-t border-line bg-surface/95 backdrop-blur">
+        <div className="fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/95 shadow-[0_-1px_12px_rgba(16,24,40,0.08)] backdrop-blur">
           <div className="mx-auto flex max-w-5xl items-center justify-between gap-4 px-4 py-3">
             <div className="min-w-0">
               <p className="text-xs text-muted">선택한 시간</p>
