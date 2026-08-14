@@ -205,7 +205,9 @@ function readPaint_(sh, lastRow, lastCol) {
         var cell = cells[c] || {};
         var eff = cell.effectiveFormat && cell.effectiveFormat.backgroundColor;
         var ue = cell.userEnteredFormat && cell.userEnteredFormat.backgroundColor;
-        line.push({ white: isWhite_(eff), explicit: !!ue });
+        // 서식이 전혀 없는 칸은 응답에서 항목째로 빠진다. 셀 기본 배경은 흰색이므로
+        // 값이 없으면 흰색으로 본다(검은색은 채널이 모두 생략된 객체로 들어온다).
+        line.push({ white: eff ? isWhite_(eff) : true, explicit: !!ue });
       }
       out.push(line);
     }
