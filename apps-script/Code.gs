@@ -55,7 +55,12 @@ function doPost(e) {
     return json_(handler(body));
   } catch (err) {
     console.error(body.action + ' 실패: ' + (err && err.stack ? err.stack : err));
-    return json_(fail_(String((err && err.message) || err)));
+    var msg = String((err && err.message) || err);
+    // 동시 요청이 몰릴 때 나오는 구글 원문 오류는 그대로 노출하지 않는다.
+    if (msg.indexOf('LockService') >= 0 || msg.indexOf('too many') >= 0) {
+      return json_(retryable_('접속이 몰리고 있어요. 잠시 후 다시 시도해 주세요.'));
+    }
+    return json_(fail_(msg));
   }
 }
 
@@ -87,6 +92,9 @@ function json_(obj) {
 }
 
 function fail_(message) { return { ok: false, message: message }; }
+
+/** 잠시 뒤 다시 보내면 성공할 수 있는 실패. 호출한 쪽이 재시도한다. */
+function retryable_(message) { return { ok: false, retryable: true, message: message }; }
 
 /** 최초 1회 편집기에서 직접 실행해 토큰을 심는다. 실행 로그에 값이 찍힌다. */
 function setupToken() {
@@ -377,7 +385,15 @@ function apiClaim(payload) {
 
   var id = name + '|' + last4;
   var lock = LockService.getScriptLock();
-  if (!lock.tryLock(LOCK_WAIT)) return fail_('신청이 몰리고 있어요. 잠시 후 다시 시도해 주세요.');
+  var got = false;
+  try {
+    got = lock.tryLock(LOCK_WAIT);
+  } catch (err) {
+    // 동시 요청이 많으면 tryLock 자체가 "too many LockService operations" 로 던진다.
+    // 원문 그대로 두면 영문 오류가 신청자에게 노출되므로 재시도 대상으로 표시한다.
+    return retryable_('신청이 몰리고 있어요. 잠시 후 다시 시도해 주세요.');
+  }
+  if (!got) return retryable_('신청이 몰리고 있어요. 잠시 후 다시 시도해 주세요.');
 
   var result;
   try {
