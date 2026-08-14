@@ -49,6 +49,10 @@ export type AdminLoad = {
   dates: DateCol[];
   openCount: number;
   preCount: number;
+  /** 흰색이지만 배경색을 직접 지정한 적이 없어 제외된 칸 수 */
+  unpainted: number;
+  /** false 면 Sheets 고급 서비스를 못 써서 '칠한 적 없음'을 구분하지 못한 상태 */
+  exact: boolean;
   error: string;
 };
 

@@ -52,6 +52,8 @@ export default function AdminPage() {
   const [sheets, setSheets] = useState<string[]>([]);
   const [dates, setDates] = useState<DateCol[]>([]);
   const [openCount, setOpenCount] = useState<number | null>(null);
+  const [unpainted, setUnpainted] = useState(0);
+  const [exact, setExact] = useState(true);
   const [rows, setRows] = useState<ClaimRow[]>([]);
   const [loadError, setLoadError] = useState('');
 
@@ -76,6 +78,8 @@ export default function AdminPage() {
     setSheets(data.sheets);
     setDates(data.dates);
     setOpenCount(data.openCount);
+    setUnpainted(data.unpainted);
+    setExact(data.exact);
     setLoadError(data.error);
     const cl = await api<{ ok: true; rows: ClaimRow[] } | { ok: false; message: string }>('admin.claims');
     if (cl.ok) setRows(cl.rows);
@@ -280,8 +284,15 @@ export default function AdminPage() {
             disabled={busy || !cfg.openCols.length}
             onClick={() =>
               void run('admin.preview', { config: cfg }, (d) => {
-                const r = d as unknown as { openCount: number; preCount: number };
+                const r = d as unknown as {
+                  openCount: number;
+                  preCount: number;
+                  unpainted: number;
+                  exact: boolean;
+                };
                 setOpenCount(r.openCount);
+                setUnpainted(r.unpainted);
+                setExact(r.exact);
                 flash(
                   'ok',
                   `열릴 자리 ${r.openCount}개${r.preCount ? ` (그중 ${r.preCount}개는 시트에 이미 이름이 있음)` : ''}`,
@@ -298,6 +309,20 @@ export default function AdminPage() {
             </span>
           )}
         </div>
+
+        {unpainted > 0 && (
+          <p className="mt-3 rounded-lg bg-canvas px-4 py-3 text-xs leading-relaxed text-muted">
+            배경색을 한 번도 지정하지 않은 칸 <strong className="text-ink tabular">{unpainted}개</strong>는
+            열지 않았습니다. 이 칸들도 신청을 받으려면 시트에서 <strong>흰색으로 칠한 뒤</strong> 다시 확인해 주세요.
+          </p>
+        )}
+
+        {!exact && (
+          <p className="mt-3 rounded-lg bg-danger-soft px-4 py-3 text-xs leading-relaxed text-danger">
+            Sheets 고급 서비스를 사용할 수 없어 &ldquo;칠한 적 없는 칸&rdquo;을 구분하지 못했습니다.
+            정리하지 않은 날짜 열이 함께 열릴 수 있으니 칸 수를 꼭 확인해 주세요.
+          </p>
+        )}
       </section>
 
       {/* 3. 오픈 시간 */}

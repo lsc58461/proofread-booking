@@ -163,9 +163,71 @@ function openSheet_(cfg) {
   return sh;
 }
 
+function colLetter_(n) {
+  var s = '';
+  while (n > 0) {
+    var r = (n - 1) % 26;
+    s = String.fromCharCode(65 + r) + s;
+    n = (n - 1 - r) / 26;
+  }
+  return s;
+}
+
+/** backgroundColor 는 값이 0인 채널을 생략하므로 빠진 값은 0으로 본다. */
+function isWhite_(c) {
+  if (!c) return false;
+  var v = function (x) { return x === undefined || x === null ? 0 : x; };
+  return v(c.red) === 1 && v(c.green) === 1 && v(c.blue) === 1;
+}
+
+/**
+ * 칸별 배경 상태를 읽는다. { white: 흰색인가, explicit: 직접 칠했는가 }
+ *
+ * SpreadsheetApp.getBackgrounds() 는 "흰색으로 칠한 칸"과 "한 번도 칠한 적 없는 칸"을
+ * 모두 #ffffff 로 돌려준다. 아직 정리하지 않은 날짜 열이 통째로 열려버리므로,
+ * userEnteredFormat 이 있는지로 둘을 구분한다.
+ */
+function readPaint_(sh, lastRow, lastCol) {
+  var a1 =
+    "'" + sh.getName().replace(/'/g, "''") + "'!A1:" + colLetter_(lastCol) + lastRow;
+  try {
+    var resp = Sheets.Spreadsheets.get(sh.getParent().getId(), {
+      ranges: [a1],
+      fields:
+        'sheets(data(rowData(values(userEnteredFormat(backgroundColor),effectiveFormat(backgroundColor)))))'
+    });
+    var rows = (((((resp.sheets || [])[0] || {}).data || [])[0] || {}).rowData) || [];
+    var out = [];
+    for (var r = 0; r < lastRow; r++) {
+      var cells = ((rows[r] || {}).values) || [];
+      var line = [];
+      for (var c = 0; c < lastCol; c++) {
+        var cell = cells[c] || {};
+        var eff = cell.effectiveFormat && cell.effectiveFormat.backgroundColor;
+        var ue = cell.userEnteredFormat && cell.userEnteredFormat.backgroundColor;
+        line.push({ white: isWhite_(eff), explicit: !!ue });
+      }
+      out.push(line);
+    }
+    return { cells: out, exact: true };
+  } catch (err) {
+    // 고급 서비스를 못 쓰는 환경에서는 예전 방식으로 동작한다(구분 불가).
+    console.error('Sheets 고급 서비스 사용 실패, getBackgrounds 로 대체: ' + err);
+    var bgs = sh.getRange(1, 1, lastRow, lastCol).getBackgrounds();
+    return {
+      cells: bgs.map(function (row) {
+        return row.map(function (b) {
+          return { white: String(b || '').toLowerCase() === '#ffffff', explicit: true };
+        });
+      }),
+      exact: false
+    };
+  }
+}
+
 /**
  * 시트에서 날짜/시간 축과 신청 가능 칸을 읽어온다.
- * 배경이 흰색인 칸만 신청 가능으로 본다(회색·주황 등은 제외).
+ * 흰색으로 직접 칠한 칸만 신청 가능으로 본다(회색·주황·미지정은 제외).
  * 이미 이름이 적혀 있는 칸은 신청 완료로 취급한다.
  */
 function readGrid_(cfg) {
@@ -174,9 +236,8 @@ function readGrid_(cfg) {
   var lastCol = sh.getLastColumn();
   if (lastRow < 2 || lastCol < 2) throw new Error('시트에 데이터가 없습니다.');
 
-  var range = sh.getRange(1, 1, lastRow, lastCol);
-  var values = range.getDisplayValues();
-  var bgs = range.getBackgrounds();
+  var values = sh.getRange(1, 1, lastRow, lastCol).getDisplayValues();
+  var paint = readPaint_(sh, lastRow, lastCol);
 
   var dates = [];
   for (var c = 2; c <= lastCol; c++) {
@@ -196,11 +257,13 @@ function readGrid_(cfg) {
   var open = [];
   var pre = {};
   var raw = {};
+  var unpainted = 0;   // 흰색이지만 칠한 적은 없는 칸 — 관리자에게 알려줄 값
   dates.forEach(function (d) {
     if (!openCols[d.col]) return;
     times.forEach(function (t) {
-      var bg = String(bgs[t.row - 1][d.col - 1] || '').toLowerCase();
-      if (bg !== '#ffffff') return;              // 흰색 칸만 신청 대상
+      var p = paint.cells[t.row - 1][d.col - 1];
+      if (!p || !p.white) return;                // 회색·주황 등은 제외
+      if (!p.explicit) { unpainted++; return; }  // 아직 정리하지 않은 칸은 열지 않는다
       var key = slotKey_(d.col, t.row);
       var cell = normName_(values[t.row - 1][d.col - 1]);
       if (cell) {                                // 시트에 이미 적힌 신청
@@ -211,7 +274,15 @@ function readGrid_(cfg) {
     });
   });
 
-  return { dates: dates, times: times, open: open, pre: pre, raw: raw };
+  return {
+    dates: dates,
+    times: times,
+    open: open,
+    pre: pre,
+    raw: raw,
+    unpainted: unpainted,
+    exact: paint.exact
+  };
 }
 
 function getGrid_(force) {
@@ -368,7 +439,10 @@ function writeCell_(cfg, parsed, value) {
 
 function apiAdminLoad() {
   var cfg = getConfig_();
-  var out = { ok: true, config: cfg, now: Date.now(), sheets: [], dates: [], openCount: 0, preCount: 0, error: '' };
+  var out = {
+    ok: true, config: cfg, now: Date.now(), sheets: [], dates: [],
+    openCount: 0, preCount: 0, unpainted: 0, exact: true, error: ''
+  };
   if (!cfg.sheetUrl) return out;
   try {
     out.sheets = SpreadsheetApp.openByUrl(cfg.sheetUrl).getSheets().map(function (s) { return s.getName(); });
@@ -376,6 +450,8 @@ function apiAdminLoad() {
     out.dates = grid.dates;
     out.openCount = grid.open.length;
     out.preCount = Object.keys(grid.pre).length;
+    out.unpainted = grid.unpainted;
+    out.exact = grid.exact;
   } catch (err) {
     out.error = String((err && err.message) || err);
   }
@@ -402,7 +478,13 @@ function apiAdminPreview(cfgIn) {
     sheetName: String(cfgIn.sheetName || '').trim(),
     openCols: (cfgIn.openCols || []).map(Number)
   });
-  return { ok: true, openCount: grid.open.length, preCount: Object.keys(grid.pre).length };
+  return {
+    ok: true,
+    openCount: grid.open.length,
+    preCount: Object.keys(grid.pre).length,
+    unpainted: grid.unpainted,
+    exact: grid.exact
+  };
 }
 
 function apiAdminSave(cfgIn) {
