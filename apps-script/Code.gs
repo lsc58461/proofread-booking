@@ -16,7 +16,10 @@ var PROPS = PropertiesService.getScriptProperties();
 
 var K_CONFIG = 'CONFIG';
 var K_TOKEN  = 'API_TOKEN';
-var CLAIM_PFX  = 'CLAIM_';   // CLAIM_<열번호> 로 샤딩 (속성 1개당 9KB 제한 회피)
+// 자리 하나당 속성 하나(CLAIM_c4r12). 여러 자리를 한 속성에 모으면
+// 읽고-고쳐-쓰는 사이에 다른 실행이 끼어들어 기록이 사라진다. 락으로 순서를
+// 맞춰도 PropertiesService 가 방금 쓴 값을 곧바로 보여준다는 보장이 없어서다.
+var CLAIM_PFX  = 'CLAIM_';
 var GRID_CACHE = 'GRID_V1';
 var GRID_TTL   = 300;        // 초. 시트 색상/구조 캐시
 var LOCK_WAIT  = 25000;      // ms
@@ -122,35 +125,20 @@ function parseSlot_(key) {
   return m ? { col: Number(m[1]), row: Number(m[2]) } : null;
 }
 
-function shardKey_(col) { return CLAIM_PFX + col; }
+function claimKey_(slot) { return CLAIM_PFX + slot; }
 
-function readShard_(col) {
-  try { return JSON.parse(PROPS.getProperty(shardKey_(col)) || '{}'); }
-  catch (err) { return {}; }
-}
-
-/**
- * 속성 한 번 읽어 샤드 원본과 병합본을 같이 돌려준다.
- * 락 안에서 전체를 읽은 뒤 같은 샤드를 또 읽지 않기 위한 것.
- */
-function readAllShards_() {
+/** 전체 신청 내역. { slotKey: {name, id, ts} } — 속성 읽기 1회 */
+function getAllClaims_() {
   var all = PROPS.getProperties();
-  var shards = {};
-  var claims = {};
+  var out = {};
   Object.keys(all).forEach(function (k) {
     if (k.indexOf(CLAIM_PFX) !== 0) return;
-    var obj;
-    try { obj = JSON.parse(all[k] || '{}'); }
-    catch (err) { obj = {}; }          // 손상된 샤드는 빈 것으로 본다
-    shards[k] = obj;
-    Object.keys(obj).forEach(function (s) { claims[s] = obj[s]; });
+    var slot = k.substring(CLAIM_PFX.length);
+    if (!parseSlot_(slot)) return;      // 예전 형식의 키는 무시한다
+    try { out[slot] = JSON.parse(all[k]); }
+    catch (err) { /* 손상된 항목은 건너뛴다 */ }
   });
-  return { shards: shards, claims: claims };
-}
-
-/** 전체 신청 내역. { slotKey: {name, id, ts} } */
-function getAllClaims_() {
-  return readAllShards_().claims;
+  return out;
 }
 
 function normName_(v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); }
@@ -394,17 +382,19 @@ function apiClaim(payload) {
   var result;
   try {
     // 속성 읽기 1회 + 쓰기 1회. 락을 잡고 있는 동안 그 이상은 하지 않는다.
-    var bundle = readAllShards_();
-    var claims = bundle.claims;
+    var claims = getAllClaims_();
     if (claims[slot]) {
-      result = fail_('방금 마감되었습니다. 다른 시간을 선택해 주세요.');
+      // 같은 사람이 같은 자리를 다시 보냈다면 응답이 유실된 뒤의 재시도로 본다.
+      // 성공으로 돌려줘야 클라이언트가 안심하고 재시도할 수 있다.
+      result = claims[slot].id === id
+        ? { ok: true, slot: slot, repeated: true }
+        : fail_('방금 마감되었습니다. 다른 시간을 선택해 주세요.');
     } else if (Object.keys(claims).some(function (k) { return claims[k].id === id; })) {
       result = fail_('이미 신청하신 시간이 있습니다. 변경하려면 담당자에게 문의해 주세요.');
     } else {
-      var sk = shardKey_(parsed.col);
-      var shard = bundle.shards[sk] || {};
-      shard[slot] = { name: name, id: id, ts: new Date().toISOString() };
-      PROPS.setProperty(sk, JSON.stringify(shard));
+      PROPS.setProperty(claimKey_(slot), JSON.stringify({
+        name: name, id: id, ts: new Date().toISOString()
+      }));
       result = { ok: true, slot: slot };
     }
   } finally {
@@ -516,15 +506,7 @@ function apiAdminClaims() {
 function apiAdminDelete(slot) {
   var parsed = parseSlot_(slot);
   if (!parsed) return fail_('잘못된 요청입니다.');
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(LOCK_WAIT)) return fail_('잠시 후 다시 시도해 주세요.');
-  try {
-    var shard = readShard_(parsed.col);
-    delete shard[slot];
-    PROPS.setProperty(shardKey_(parsed.col), JSON.stringify(shard));
-  } finally {
-    lock.releaseLock();
-  }
+  PROPS.deleteProperty(claimKey_(slot));   // 자리마다 키가 따로라 락이 필요 없다
   writeCell_(getConfig_(), parsed, '');
   dropGridCache_();
   return { ok: true };
@@ -571,17 +553,16 @@ function apiAdminImportFromSheet() {
   try {
     clearClaims_();
     var stamp = new Date().toISOString();
-    var shards = {};
+    var batch = {};
     Object.keys(grid.raw).forEach(function (k) {
-      var p = parseSlot_(k);
-      var sk = shardKey_(p.col);
-      shards[sk] = shards[sk] || {};
       // 시트에는 이름만 있어 연락처를 알 수 없다. 같은 이름으로 다시 신청하는 것을
       // 막으려면 식별자가 필요하므로 자리표시자를 넣는다.
-      shards[sk][k] = { name: grid.raw[k], id: grid.raw[k] + '|----', ts: stamp };
+      batch[claimKey_(k)] = JSON.stringify({
+        name: grid.raw[k], id: grid.raw[k] + '|----', ts: stamp
+      });
       imported++;
     });
-    Object.keys(shards).forEach(function (sk) { PROPS.setProperty(sk, JSON.stringify(shards[sk])); });
+    if (imported) PROPS.setProperties(batch);
   } finally {
     lock.releaseLock();
   }
