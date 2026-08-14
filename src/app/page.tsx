@@ -5,7 +5,6 @@ import SlotGrid from '@/components/SlotGrid';
 import type { BookingState, SlotKey, TakenState } from '@/lib/types';
 
 const ID_KEY = 'pb.identity';
-const MINE_KEY = 'pb.mine';
 const POLL_MS = 5000;
 
 type Toast = { kind: 'ok' | 'err'; text: string };
@@ -37,7 +36,8 @@ export default function ApplyPage() {
   const [name, setName] = useState('');
   const [last4, setLast4] = useState('');
   const [selected, setSelected] = useState<SlotKey | null>(null);
-  const [mine, setMine] = useState<SlotKey | null>(null);
+  // 방금 신청한 자리. 저장하지 않으므로 새로고침하면 사라진다.
+  const [booked, setBooked] = useState<SlotKey | null>(null);
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const [, forceTick] = useState(0);
@@ -51,16 +51,14 @@ export default function ApplyPage() {
     toastTimer.current = setTimeout(() => setToast(null), 4000);
   }, []);
 
-  /* 저장해 둔 이름·연락처와 직전 신청 복원 */
+  /* 저장해 둔 이름·연락처 복원 (입력 편의용) */
   useEffect(() => {
     try {
       const raw = localStorage.getItem(ID_KEY);
-      if (raw) {
-        const saved = JSON.parse(raw) as { name?: string; last4?: string };
-        setName(saved.name ?? '');
-        setLast4(saved.last4 ?? '');
-      }
-      setMine(localStorage.getItem(MINE_KEY));
+      if (!raw) return;
+      const saved = JSON.parse(raw) as { name?: string; last4?: string };
+      setName(saved.name ?? '');
+      setLast4(saved.last4 ?? '');
     } catch {
       /* 저장소를 쓸 수 없어도 신청 자체는 가능하다 */
     }
@@ -127,19 +125,6 @@ export default function ApplyPage() {
     return () => clearInterval(id);
   }, []);
 
-  /* 관리자가 신청을 지웠다면 로컬 기록도 정리한다 */
-  useEffect(() => {
-    if (!state?.ready || !state.taken || !mine) return;
-    if (state.taken[mine] === undefined) {
-      setMine(null);
-      try {
-        localStorage.removeItem(MINE_KEY);
-      } catch {
-        /* 무시 */
-      }
-    }
-  }, [state, mine]);
-
   const serverNow = Date.now() + offsetRef.current;
 
   const phase: Phase = useMemo(() => {
@@ -187,12 +172,7 @@ export default function ApplyPage() {
       });
       const data = (await res.json()) as { ok: boolean; message?: string };
       if (data.ok) {
-        try {
-          localStorage.setItem(MINE_KEY, selected);
-        } catch {
-          /* 무시 */
-        }
-        setMine(selected);
+        setBooked(selected);
         setSelected(null);
         showToast('ok', '신청이 완료되었습니다.');
       } else {
@@ -206,43 +186,11 @@ export default function ApplyPage() {
     }
   }, [selected, busy, name, last4, showToast, loadTaken]);
 
-  const cancel = useCallback(async () => {
-    if (!mine || busy) return;
-    if (!confirm(`${slotLabel(mine)} 신청을 취소할까요?`)) return;
-    setBusy(true);
-    try {
-      const res = await fetch('/api/cancel', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ name: name.trim(), last4: last4.trim(), slot: mine }),
-      });
-      const data = (await res.json()) as { ok: boolean; message?: string };
-      if (data.ok) {
-        try {
-          localStorage.removeItem(MINE_KEY);
-        } catch {
-          /* 무시 */
-        }
-        setMine(null);
-        showToast('ok', '신청이 취소되었습니다.');
-      } else {
-        showToast('err', data.message ?? '취소하지 못했습니다.');
-      }
-    } catch {
-      showToast('err', '네트워크 오류가 발생했습니다.');
-    } finally {
-      setBusy(false);
-      void loadTaken();
-    }
-  }, [mine, busy, name, last4, showToast, slotLabel, loadTaken]);
-
   return (
     <>
       <main className="mx-auto max-w-5xl px-4 py-8 pb-36">
         <header className="mb-6">
-          <h1 className="text-2xl font-bold tracking-tight">
-            {state?.title ?? '첨삭 신청'}
-          </h1>
+          <h1 className="text-2xl font-bold tracking-tight">{state?.title ?? '첨삭 신청'}</h1>
           {state?.notice && (
             <p className="mt-2 rounded-lg border border-line bg-surface px-4 py-3 text-sm leading-relaxed whitespace-pre-line text-muted">
               {state.notice}
@@ -298,7 +246,10 @@ export default function ApplyPage() {
               </div>
               {state?.closeAt ? (
                 <p className="text-sm text-muted">
-                  마감까지 <span className="tabular font-semibold text-ink">{fmtRemain(state.closeAt - serverNow)}</span>
+                  마감까지{' '}
+                  <span className="tabular font-semibold text-ink">
+                    {fmtRemain(state.closeAt - serverNow)}
+                  </span>
                 </p>
               ) : (
                 <p className="text-sm text-muted">자리가 모두 차면 종료됩니다</p>
@@ -316,28 +267,20 @@ export default function ApplyPage() {
           )}
         </section>
 
-        {/* 내 신청 */}
-        {mine && (
-          <section className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-good/30 bg-good-soft px-5 py-4">
-            <div>
-              <p className="text-xs font-semibold text-good">내 신청</p>
-              <p className="mt-0.5 font-semibold">{slotLabel(mine)}</p>
-            </div>
-            {state?.allowCancel && (
-              <button
-                type="button"
-                onClick={() => void cancel()}
-                disabled={busy}
-                className="rounded-lg border border-good/40 bg-surface px-3.5 py-2 text-sm font-medium text-good hover:bg-good-soft disabled:opacity-50"
-              >
-                신청 취소
-              </button>
-            )}
+        {/* 신청 완료 안내 — 이 화면에서만 보인다 */}
+        {booked && (
+          <section className="mb-6 rounded-xl border border-good/30 bg-good-soft px-5 py-4">
+            <p className="text-xs font-semibold text-good">신청 완료</p>
+            <p className="mt-0.5 text-lg font-bold">{slotLabel(booked)}</p>
+            <p className="mt-2 text-xs leading-relaxed text-good/80">
+              {name} 님으로 신청되었습니다. 신청 내역은 화면을 벗어나면 다시 확인할 수 없으니
+              시간을 메모해 두세요. 변경이나 취소는 담당자에게 문의해 주세요.
+            </p>
           </section>
         )}
 
         {/* 신청자 정보 */}
-        {(phase === 'open' || phase === 'before') && (
+        {!booked && (phase === 'open' || phase === 'before') && (
           <section className="mb-6 rounded-xl border border-line bg-surface p-5">
             <h2 className="mb-3 text-sm font-semibold">신청자 정보</h2>
             <div className="grid gap-3 sm:grid-cols-2">
@@ -364,7 +307,7 @@ export default function ApplyPage() {
               </label>
             </div>
             <p className="mt-2.5 text-xs text-muted">
-              동명이인 구분과 본인 확인에만 쓰입니다. 한 사람당 한 자리만 신청할 수 있습니다.
+              동명이인 구분에만 쓰입니다. 한 사람당 한 자리만 신청할 수 있습니다.
             </p>
           </section>
         )}
@@ -385,8 +328,8 @@ export default function ApplyPage() {
               open={openSet}
               taken={taken}
               selected={selected}
-              mine={mine}
-              locked={phase !== 'open' || !!mine || busy}
+              booked={booked}
+              locked={phase !== 'open' || !!booked || busy}
               onSelect={(k) => setSelected((cur) => (cur === k ? null : k))}
             />
 
@@ -396,9 +339,6 @@ export default function ApplyPage() {
               </li>
               <li className="flex items-center gap-1.5">
                 <span className="inline-block size-3 rounded bg-line" /> 마감
-              </li>
-              <li className="flex items-center gap-1.5">
-                <span className="inline-block size-3 rounded bg-good" /> 내 신청
               </li>
             </ul>
           </section>

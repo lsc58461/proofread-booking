@@ -37,7 +37,6 @@ const EMPTY: AdminConfig = {
   openCols: [],
   openAt: 0,
   closeAt: 0,
-  allowCancel: true,
 };
 
 export default function AdminPage() {
@@ -349,15 +348,9 @@ export default function AdminPage() {
             />
           </label>
         </div>
-        <label className="mt-4 flex items-center gap-2 text-sm">
-          <input
-            type="checkbox"
-            checked={cfg.allowCancel}
-            onChange={(e) => setCfg({ ...cfg, allowCancel: e.target.checked })}
-            className="size-4 accent-[var(--color-brand)]"
-          />
-          신청자가 직접 취소할 수 있게 하기
-        </label>
+        <p className="mt-3 text-xs text-muted">
+          시각은 이 브라우저의 시간대를 기준으로 저장됩니다.
+        </p>
       </section>
 
       {/* 4. 안내 문구 */}

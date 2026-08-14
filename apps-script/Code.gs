@@ -28,8 +28,7 @@ var DEFAULT_CONFIG = {
   sheetName: '',
   openCols: [],      // 신청을 받을 날짜 열 번호(1-based)
   openAt: 0,         // epoch ms. 0이면 제한 없음
-  closeAt: 0,
-  allowCancel: true
+  closeAt: 0
 };
 
 /* ─────────────────────────── 진입점 ─────────────────────────── */
@@ -66,7 +65,6 @@ var ROUTES = {
   'state':          function (b) { return apiState(); },
   'taken':          function (b) { return apiTaken(); },
   'claim':          function (b) { return apiClaim(b.payload || {}); },
-  'cancel':         function (b) { return apiCancel(b.payload || {}); },
   'admin.load':     function (b) { return apiAdminLoad(); },
   'admin.inspect':  function (b) { return apiAdminInspect(b.sheetUrl, b.sheetName); },
   'admin.preview':  function (b) { return apiAdminPreview(b.config || {}); },
@@ -184,8 +182,8 @@ function isWhite_(c) {
  * 칸별 배경 상태를 읽는다. { white: 흰색인가, explicit: 직접 칠했는가 }
  *
  * SpreadsheetApp.getBackgrounds() 는 "흰색으로 칠한 칸"과 "한 번도 칠한 적 없는 칸"을
- * 모두 #ffffff 로 돌려준다. 아직 정리하지 않은 날짜 열이 통째로 열려버리므로,
- * userEnteredFormat 이 있는지로 둘을 구분한다.
+ * 모두 #ffffff 로 돌려준다. 둘 다 열긴 하지만, 후자가 몇 개인지는 관리자에게
+ * 알려줘야 칠하다 빠뜨린 칸을 발견할 수 있으므로 userEnteredFormat 으로 구분한다.
  */
 function readPaint_(sh, lastRow, lastCol) {
   var a1 =
@@ -229,7 +227,7 @@ function readPaint_(sh, lastRow, lastCol) {
 
 /**
  * 시트에서 날짜/시간 축과 신청 가능 칸을 읽어온다.
- * 흰색으로 직접 칠한 칸만 신청 가능으로 본다(회색·주황·미지정은 제외).
+ * 화면에서 흰색으로 보이는 칸만 신청 대상으로 본다(회색·주황은 제외).
  * 이미 이름이 적혀 있는 칸은 신청 완료로 취급한다.
  */
 function readGrid_(cfg) {
@@ -341,7 +339,6 @@ function apiState() {
     notice: cfg.notice,
     openAt: cfg.openAt,
     closeAt: cfg.closeAt,
-    allowCancel: !!cfg.allowCancel,
     now: Date.now(),
     dates: grid.dates.filter(function (d) { return colsUsed[d.col]; }),
     times: grid.times.filter(function (t) { return rowsUsed[t.row]; }),
@@ -389,7 +386,7 @@ function apiClaim(payload) {
     if (claims[slot]) {
       result = fail_('방금 마감되었습니다. 다른 시간을 선택해 주세요.');
     } else if (Object.keys(claims).some(function (k) { return claims[k].id === id; })) {
-      result = fail_('이미 신청하신 시간이 있습니다. 변경하려면 기존 신청을 취소해 주세요.');
+      result = fail_('이미 신청하신 시간이 있습니다. 변경하려면 담당자에게 문의해 주세요.');
     } else {
       var shard = readShard_(parsed.col);
       shard[slot] = { name: name, id: id, ts: new Date().toISOString() };
@@ -401,41 +398,6 @@ function apiClaim(payload) {
   }
 
   if (result.ok) writeCell_(cfg, parsed, name);   // 락 밖에서 시트 반영
-  return result;
-}
-
-function apiCancel(payload) {
-  var name  = normName_(payload.name);
-  var last4 = String(payload.last4 || '').trim();
-  var slot  = String(payload.slot || '');
-
-  var cfg = getConfig_();
-  if (!cfg.allowCancel) return fail_('취소는 관리자에게 문의해 주세요.');
-  var parsed = parseSlot_(slot);
-  if (!parsed) return fail_('취소할 신청을 찾을 수 없습니다.');
-
-  var id = name + '|' + last4;
-  var lock = LockService.getScriptLock();
-  if (!lock.tryLock(LOCK_WAIT)) return fail_('잠시 후 다시 시도해 주세요.');
-
-  var result;
-  try {
-    var shard = readShard_(parsed.col);
-    if (!shard[slot]) result = fail_('취소할 신청을 찾을 수 없습니다.');
-    else if (shard[slot].id !== id) result = fail_('본인 신청만 취소할 수 있습니다.');
-    else {
-      delete shard[slot];
-      PROPS.setProperty(shardKey_(parsed.col), JSON.stringify(shard));
-      result = { ok: true };
-    }
-  } finally {
-    lock.releaseLock();
-  }
-
-  if (result.ok) {
-    writeCell_(cfg, parsed, '');
-    dropGridCache_();   // 캐시된 pre 가 취소된 칸을 계속 마감으로 보이게 하는 것을 막는다
-  }
   return result;
 }
 
@@ -509,7 +471,6 @@ function apiAdminSave(cfgIn) {
   cfg.openCols    = (cfgIn.openCols || []).map(Number).filter(function (n) { return n > 1; });
   cfg.openAt      = Number(cfgIn.openAt) || 0;
   cfg.closeAt     = Number(cfgIn.closeAt) || 0;
-  cfg.allowCancel = !!cfgIn.allowCancel;
   if (cfg.closeAt && cfg.openAt && cfg.closeAt <= cfg.openAt) return fail_('마감 시간이 오픈 시간보다 빠릅니다.');
   saveConfig_(cfg);
   return { ok: true, config: cfg };
@@ -601,7 +562,8 @@ function apiAdminImportFromSheet() {
       var p = parseSlot_(k);
       var sk = shardKey_(p.col);
       shards[sk] = shards[sk] || {};
-      // 시트에서 가져온 신청은 연락처를 알 수 없어 본인 취소가 불가능하다(관리자만 삭제 가능).
+      // 시트에는 이름만 있어 연락처를 알 수 없다. 같은 이름으로 다시 신청하는 것을
+      // 막으려면 식별자가 필요하므로 자리표시자를 넣는다.
       shards[sk][k] = { name: grid.raw[k], id: grid.raw[k] + '|----', ts: stamp };
       imported++;
     });

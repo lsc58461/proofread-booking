@@ -9,18 +9,19 @@ type Props = {
   open: Set<SlotKey>;
   taken: Record<SlotKey, string>;
   selected: SlotKey | null;
-  mine: SlotKey | null;
+  /** 이 화면에서 방금 신청한 자리. 새로고침하면 사라진다. */
+  booked: SlotKey | null;
   locked: boolean;
   onSelect: (slot: SlotKey) => void;
 };
 
 const key = (col: number, row: number): SlotKey => `c${col}r${row}`;
 
-type Cell = 'closed' | 'taken' | 'mine' | 'selected' | 'free';
+type Cell = 'closed' | 'taken' | 'booked' | 'selected' | 'free';
 
 function cellState(k: SlotKey, p: Props): Cell {
   if (!p.open.has(k)) return 'closed';
-  if (p.mine === k) return 'mine';
+  if (p.booked === k) return 'booked';
   if (p.taken[k] !== undefined) return 'taken';
   if (p.selected === k) return 'selected';
   return 'free';
@@ -29,7 +30,7 @@ function cellState(k: SlotKey, p: Props): Cell {
 const CELL_CLASS: Record<Cell, string> = {
   closed: 'bg-canvas text-transparent cursor-default',
   taken: 'bg-line/40 text-muted cursor-not-allowed',
-  mine: 'bg-good-soft text-good ring-2 ring-good font-semibold',
+  booked: 'bg-good-soft text-good ring-2 ring-good font-semibold',
   selected: 'bg-brand text-white font-semibold ring-2 ring-brand',
   free: 'bg-surface text-brand hover:bg-brand-soft cursor-pointer',
 };
@@ -49,7 +50,7 @@ export default function SlotGrid(props: Props) {
 
   const label = (k: SlotKey, state: Cell) => {
     if (state === 'closed') return '·';
-    if (state === 'mine') return '내 신청';
+    if (state === 'booked') return '신청 완료';
     if (state === 'taken') return taken[k] || '마감';
     if (state === 'selected') return '선택됨';
     return '신청';

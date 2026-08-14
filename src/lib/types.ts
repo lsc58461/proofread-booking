@@ -13,7 +13,6 @@ export type BookingState = {
   notice?: string;
   openAt?: number;
   closeAt?: number;
-  allowCancel?: boolean;
   dates?: DateCol[];
   times?: TimeRow[];
   open?: SlotKey[];
@@ -38,7 +37,6 @@ export type AdminConfig = {
   openCols: number[];
   openAt: number;
   closeAt: number;
-  allowCancel: boolean;
 };
 
 export type AdminLoad = {
