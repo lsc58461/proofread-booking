@@ -17,6 +17,7 @@ const FORWARDABLE = new Set([
   'admin.import',
   'admin.reset',
   'admin.refresh',
+  'admin.bench',
 ]);
 
 export async function POST(req: Request) {

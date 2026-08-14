@@ -74,7 +74,8 @@ var ROUTES = {
   'admin.sync':     function (b) { return apiAdminSyncToSheet(); },
   'admin.import':   function (b) { return apiAdminImportFromSheet(); },
   'admin.reset':    function (b) { return apiAdminResetAll(); },
-  'admin.refresh':  function (b) { return apiAdminRefreshGrid(); }
+  'admin.refresh':  function (b) { return apiAdminRefreshGrid(); },
+  'admin.bench':    function (b) { return apiAdminBench(); }
 };
 
 function json_(obj) {
@@ -128,18 +129,28 @@ function readShard_(col) {
   catch (err) { return {}; }
 }
 
-/** 전체 신청 내역. { slotKey: {name, id, ts} } */
-function getAllClaims_() {
+/**
+ * 속성 한 번 읽어 샤드 원본과 병합본을 같이 돌려준다.
+ * 락 안에서 전체를 읽은 뒤 같은 샤드를 또 읽지 않기 위한 것.
+ */
+function readAllShards_() {
   var all = PROPS.getProperties();
-  var out = {};
+  var shards = {};
+  var claims = {};
   Object.keys(all).forEach(function (k) {
     if (k.indexOf(CLAIM_PFX) !== 0) return;
-    try {
-      var shard = JSON.parse(all[k] || '{}');
-      Object.keys(shard).forEach(function (s) { out[s] = shard[s]; });
-    } catch (err) { /* 손상된 샤드는 건너뛴다 */ }
+    var obj;
+    try { obj = JSON.parse(all[k] || '{}'); }
+    catch (err) { obj = {}; }          // 손상된 샤드는 빈 것으로 본다
+    shards[k] = obj;
+    Object.keys(obj).forEach(function (s) { claims[s] = obj[s]; });
   });
-  return out;
+  return { shards: shards, claims: claims };
+}
+
+/** 전체 신청 내역. { slotKey: {name, id, ts} } */
+function getAllClaims_() {
+  return readAllShards_().claims;
 }
 
 function normName_(v) { return String(v == null ? '' : v).replace(/\s+/g, ' ').trim(); }
@@ -382,15 +393,18 @@ function apiClaim(payload) {
 
   var result;
   try {
-    var claims = getAllClaims_();
+    // 속성 읽기 1회 + 쓰기 1회. 락을 잡고 있는 동안 그 이상은 하지 않는다.
+    var bundle = readAllShards_();
+    var claims = bundle.claims;
     if (claims[slot]) {
       result = fail_('방금 마감되었습니다. 다른 시간을 선택해 주세요.');
     } else if (Object.keys(claims).some(function (k) { return claims[k].id === id; })) {
       result = fail_('이미 신청하신 시간이 있습니다. 변경하려면 담당자에게 문의해 주세요.');
     } else {
-      var shard = readShard_(parsed.col);
+      var sk = shardKey_(parsed.col);
+      var shard = bundle.shards[sk] || {};
       shard[slot] = { name: name, id: id, ts: new Date().toISOString() };
-      PROPS.setProperty(shardKey_(parsed.col), JSON.stringify(shard));
+      PROPS.setProperty(sk, JSON.stringify(shard));
       result = { ok: true, slot: slot };
     }
   } finally {
@@ -592,4 +606,51 @@ function apiAdminRefreshGrid() {
   dropGridCache_();
   var grid = getGrid_(true);
   return { ok: true, openCount: grid.open.length };
+}
+
+/**
+ * 저장소 연산별 실제 비용 측정. 어디에 신청 현황을 두어야 하는지 판단하기 위한 것으로,
+ * 운영 중에는 호출하지 않는다. 시트에는 쓰지 않는다.
+ */
+function apiAdminBench() {
+  var out = [];
+  function mark(label, fn) {
+    var t0 = Date.now();
+    var v;
+    try { v = fn(); }
+    catch (err) { out.push({ op: label, ms: Date.now() - t0, error: String(err) }); return null; }
+    out.push({ op: label, ms: Date.now() - t0 });
+    return v;
+  }
+
+  var cache = CacheService.getScriptCache();
+  var probe = 'BENCH_' + Date.now();
+
+  mark('PROPS.getProperties (전체)', function () { return PROPS.getProperties(); });
+  mark('PROPS.getProperty (1개)',    function () { return PROPS.getProperty(K_CONFIG); });
+  mark('PROPS.setProperty (1개)',    function () { PROPS.setProperty(probe, 'x'); });
+  mark('PROPS.setProperty (2회차)',  function () { PROPS.setProperty(probe, 'y'); });
+  mark('PROPS.deleteProperty',       function () { PROPS.deleteProperty(probe); });
+
+  mark('CACHE.get',  function () { return cache.get(probe); });
+  mark('CACHE.put',  function () { cache.put(probe, 'x', 60); });
+  mark('CACHE.get (적중)', function () { return cache.get(probe); });
+  cache.remove(probe);
+
+  mark('LockService 잡고 풀기', function () {
+    var l = LockService.getScriptLock();
+    l.tryLock(5000);
+    l.releaseLock();
+  });
+
+  var cfg = getConfig_();
+  if (cfg.sheetUrl) {
+    var sh = mark('SpreadsheetApp.openByUrl', function () { return openSheet_(cfg); });
+    if (sh) {
+      mark('sheet.getRange().getValue()', function () { return sh.getRange(2, 2).getValue(); });
+      mark('sheet 한 열 getValues()', function () { return sh.getRange(2, 2, 37, 1).getValues(); });
+    }
+  }
+
+  return { ok: true, timings: out };
 }
