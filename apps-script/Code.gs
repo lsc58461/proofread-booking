@@ -31,7 +31,8 @@ var DEFAULT_CONFIG = {
   sheetName: '',
   openCols: [],      // 신청을 받을 날짜 열 번호(1-based)
   openAt: 0,         // epoch ms. 0이면 제한 없음
-  closeAt: 0
+  closeAt: 0,
+  blocked: false     // true 면 신청·관리자 화면을 없는 페이지처럼 막는다
 };
 
 /* ─────────────────────────── 진입점 ─────────────────────────── */
@@ -50,6 +51,11 @@ function doPost(e) {
 
   var handler = ROUTES[body.action];
   if (!handler) return json_(fail_('알 수 없는 요청입니다: ' + body.action));
+
+  // 차단 중에는 관리자 동작도 막는다. 해제는 gate.* 로만 가능하다.
+  if (String(body.action).indexOf('admin.') === 0 && getConfig_().blocked) {
+    return json_({ ok: false, blocked: true, message: '차단된 상태입니다.' });
+  }
 
   try {
     return json_(handler(body));
@@ -83,7 +89,9 @@ var ROUTES = {
   'admin.import':   function (b) { return apiAdminImportFromSheet(); },
   'admin.reset':    function (b) { return apiAdminResetAll(); },
   'admin.refresh':  function (b) { return apiAdminRefreshGrid(); },
-  'admin.bench':    function (b) { return apiAdminBench(); }
+  'admin.bench':    function (b) { return apiAdminBench(); },
+  'gate.status':    function (b) { return { ok: true, blocked: !!getConfig_().blocked }; },
+  'gate.set':       function (b) { return apiGateSet(b.blocked); }
 };
 
 function json_(obj) {
@@ -321,6 +329,7 @@ function mergeTaken_(pre, claims) {
 
 function apiState() {
   var cfg = getConfig_();
+  if (cfg.blocked) return { ok: true, blocked: true, now: Date.now() };
   if (!cfg.sheetUrl || !(cfg.openCols || []).length) {
     return { ok: true, ready: false, now: Date.now(), title: cfg.title, message: '아직 신청이 열리지 않았습니다.' };
   }
@@ -356,6 +365,7 @@ function apiState() {
 
 /** 폴링용 경량 응답 */
 function apiTaken() {
+  if (getConfig_().blocked) return { ok: true, blocked: true, now: Date.now(), taken: {} };
   var grid;
   try { grid = getGrid_(false); }
   catch (err) { return { ok: true, now: Date.now(), taken: {} }; }
@@ -373,6 +383,7 @@ function apiClaim(payload) {
   if (!parsed) return fail_('시간을 다시 선택해 주세요.');
 
   var cfg = getConfig_();
+  if (cfg.blocked) return fail_('신청을 받고 있지 않습니다.');
   var now = Date.now();
   if (cfg.openAt && now < cfg.openAt) return fail_('아직 신청 시작 전입니다.');
   if (cfg.closeAt && now > cfg.closeAt) return fail_('신청이 마감되었습니다.');
@@ -616,6 +627,14 @@ function apiAdminRefreshGrid() {
   dropGridCache_();
   var grid = getGrid_(true);
   return { ok: true, openCount: grid.open.length };
+}
+
+/** 사이트 차단 여부를 바꾼다. 관리자 비밀번호와 분리된 별도 화면에서만 호출한다. */
+function apiGateSet(blocked) {
+  var cfg = getConfig_();
+  cfg.blocked = !!blocked;
+  saveConfig_(cfg);
+  return { ok: true, blocked: cfg.blocked };
 }
 
 /**

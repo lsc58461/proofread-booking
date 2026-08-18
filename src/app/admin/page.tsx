@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useState } from 'react';
+import NotFound from '@/components/NotFound';
 import type { AdminConfig, AdminInspect, AdminLoad, ClaimRow, DateCol } from '@/lib/types';
 
 type Msg = { kind: 'ok' | 'err'; text: string } | null;
@@ -41,6 +42,8 @@ const EMPTY: AdminConfig = {
 
 export default function AdminPage() {
   const [authed, setAuthed] = useState<boolean | null>(null);
+  // 차단 중에는 로그인 화면조차 보이지 않아야 하므로, 인증과 별개로 먼저 확인한다.
+  const [blocked, setBlocked] = useState(false);
   // 설정까지 다 받아온 뒤에 화면을 그린다. 그러지 않으면 빈 폼이 먼저 보인다.
   const [ready, setReady] = useState(false);
   const [password, setPassword] = useState('');
@@ -76,8 +79,9 @@ export default function AdminPage() {
   }, []);
 
   const loadAll = useCallback(async () => {
-    const data = await api<AdminLoad | { ok: false; message: string }>('admin.load');
+    const data = await api<AdminLoad | { ok: false; blocked?: boolean; message: string }>('admin.load');
     if (!data.ok) {
+      if (data.blocked) { setBlocked(true); return; }
       flash('err', data.message);
       return;
     }
@@ -94,6 +98,11 @@ export default function AdminPage() {
 
   useEffect(() => {
     void (async () => {
+      // 공개 상태 조회로 차단 여부부터 확인한다(로그인 불필요).
+      try {
+        const st = await fetch('/api/state', { cache: 'no-store' }).then((r) => r.json());
+        if (st?.blocked) { setBlocked(true); setAuthed(false); setReady(true); return; }
+      } catch { /* 확인 실패 시에는 평소대로 진행한다 */ }
       const s = await api<{ ok: true; authed: boolean }>('session');
       const on = s.ok && s.authed;
       if (on) await loadAll();
@@ -137,6 +146,8 @@ export default function AdminPage() {
   );
 
   /* ── 로그인 화면 ── */
+
+  if (blocked) return <NotFound />;
 
   if (authed === null || !ready) {
     return (

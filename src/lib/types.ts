@@ -8,6 +8,8 @@ export type BookingState = {
   ok: true;
   ready: boolean;
   now: number;
+  /** true 면 사이트가 차단된 상태 — 없는 페이지처럼 보여준다 */
+  blocked?: boolean;
   title: string;
   message?: string;
   notice?: string;
@@ -22,6 +24,7 @@ export type BookingState = {
 export type TakenState = {
   ok: true;
   now: number;
+  blocked?: boolean;
   taken: Record<SlotKey, string>;
 };
 

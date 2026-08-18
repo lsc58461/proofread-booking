@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { callGas } from '@/lib/gas';
-import { endAdminSession, isAdmin, startAdminSession, verifyPassword } from '@/lib/auth';
+import { endSession, hasSession, startSession, verifyPassword } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
@@ -32,27 +32,27 @@ export async function POST(req: Request) {
 
   try {
     if (action === 'login') {
-      if (!verifyPassword(String(body.password ?? ''))) {
+      if (!verifyPassword('admin', String(body.password ?? ''))) {
         return NextResponse.json({ ok: false, message: '비밀번호가 올바르지 않습니다.' }, { status: 401 });
       }
-      await startAdminSession();
+      await startSession('admin');
       return NextResponse.json({ ok: true });
     }
 
     if (action === 'logout') {
-      await endAdminSession();
+      await endSession('admin');
       return NextResponse.json({ ok: true });
     }
 
     if (action === 'session') {
-      return NextResponse.json({ ok: true, authed: await isAdmin() });
+      return NextResponse.json({ ok: true, authed: await hasSession('admin') });
     }
 
     if (!FORWARDABLE.has(action)) {
       return NextResponse.json({ ok: false, message: '알 수 없는 요청입니다.' }, { status: 400 });
     }
 
-    if (!(await isAdmin())) {
+    if (!(await hasSession('admin'))) {
       return NextResponse.json({ ok: false, message: '로그인이 필요합니다.' }, { status: 401 });
     }
 

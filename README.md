@@ -70,6 +70,7 @@
    | `GAS_TOKEN` | `setupToken()` 로그에 찍힌 값 |
    | `ADMIN_PASSWORD` | 관리자 페이지 비밀번호 |
    | `ADMIN_COOKIE_SECRET` | 아무 임의 문자열 (`openssl rand -hex 32`) |
+   | `GATE_PASSWORD` | 차단 페이지 비밀번호 (관리자와 분리) |
 
 3. 배포 후 `https://…vercel.app/admin` 에서 설정
 
@@ -115,6 +116,17 @@
 
 ---
 
+## 사이트 차단 (`/gate`)
+
+`/gate` 에서 비밀번호를 넣고 스위치를 켜면 신청 페이지와 관리자 페이지가 모두
+존재하지 않는 페이지처럼 표시된다. 끄면 즉시 원래대로 돌아온다. 신청 기록과
+설정은 그대로 남는다.
+
+비밀번호는 `GATE_PASSWORD` 로 관리자와 **분리되어 있다.** 관리자 비밀번호는
+운영자에게 넘기지만, 사이트를 내리고 올리는 권한까지 함께 넘어가면 안 되기
+때문이다. 차단 중에는 관리자 동작도 서버에서 거부되며, 해제는 `/gate` 로만
+가능하다.
+
 ## 알아둘 점
 
 - **동시 접속 시 대기.** 락이 요청을 한 줄로 세우므로 80명이 정각에 몰리면
@@ -145,14 +157,17 @@ src/
   app/
     page.tsx         신청 페이지
     admin/page.tsx   관리자 페이지
+    gate/page.tsx    차단 스위치
     api/
       state/         현황 조회 (전체 / 폴링용 경량)
       claim/         신청
       admin/         로그인 + 관리자 동작 프록시
+      gate/          차단 로그인 + 토글
   components/
     SlotGrid.tsx     시간표 (데스크톱 격자 / 모바일 날짜탭)
+    NotFound.tsx     차단 중 표시하는 404 화면
   lib/
     gas.ts           Apps Script 호출
-    auth.ts          관리자 세션
+    auth.ts          관리자·차단 세션
     types.ts
 ```

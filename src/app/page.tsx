@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import SlotGrid from '@/components/SlotGrid';
+import NotFound from '@/components/NotFound';
 import type { BookingState, SlotKey, TakenState } from '@/lib/types';
 
 const ID_KEY = 'pb.identity';
@@ -34,6 +35,7 @@ function fmtAt(ms: number) {
 
 export default function ApplyPage() {
   const [state, setState] = useState<BookingState | null>(null);
+  const [blocked, setBlocked] = useState(false);
   const [loadError, setLoadError] = useState('');
   const [name, setName] = useState('');
   const [last4, setLast4] = useState('');
@@ -84,6 +86,7 @@ export default function ApplyPage() {
         return;
       }
       offsetRef.current = data.now - Date.now();
+      if (data.blocked) { setBlocked(true); return; }
       setState(data);
       setLoadError('');
     } catch {
@@ -97,6 +100,7 @@ export default function ApplyPage() {
       const data = (await res.json()) as TakenState | { ok: false };
       if (!('taken' in data)) return;
       offsetRef.current = data.now - Date.now();
+      if (data.blocked) { setBlocked(true); return; }
       setState((prev) => (prev ? { ...prev, taken: data.taken } : prev));
     } catch {
       /* 폴링 실패는 조용히 넘어가고 다음 주기에 다시 시도한다 */
@@ -202,6 +206,8 @@ export default function ApplyPage() {
       void loadTaken();
     }
   }, [selected, busy, name, last4, showToast, loadTaken]);
+
+  if (blocked) return <NotFound />;
 
   return (
     <>
