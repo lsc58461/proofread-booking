@@ -1,8 +1,8 @@
 /**
- * 차단 중일 때 보여줄 화면. 브라우저 기본 404 와 같은 모습으로 두어
- * 페이지가 존재하지 않는 것처럼 보이게 한다.
+ * 존재하지 않는 주소와 차단된 사이트가 같은 화면을 쓴다.
+ * 브라우저 기본 404 와 같은 모습이라 페이지가 없는 것처럼 보인다.
  */
-export default function NotFound() {
+export default function NotFoundPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-white">
       <div className="flex items-center">
