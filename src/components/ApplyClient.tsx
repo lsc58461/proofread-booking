@@ -84,7 +84,7 @@ export default function ApplyClient() {
         return;
       }
       offsetRef.current = data.now - Date.now();
-      if (data.blocked) return location.reload();   // 서버가 404 를 내려준다
+      if (data.blocked) return location.reload();
       setState(data);
       setLoadError('');
     } catch {
